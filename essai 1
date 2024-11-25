@@ -1,0 +1,1662 @@
+/*      RADIN-LOADER 
+    by Blaise Lapierre (France)
+    remixed by Daniel Mielke (Germany)
+
+Serial Texts only english
+LCD Text Multilanguage 
+
+I have added a lot of spelling mistakes, so have fun finding them. 
+
+
+    
+PINOUT ARDUINO
+ 
+[EN]  Arduino Pin on the device
+
+
+0 /Arduino RX – not used 
+1 /Arduino TX – not used 
+2 HX711 – Dt
+3 HX711 – Sck
+5 Buzzer - Signal
+10  DRV – Enable
+11  DRV – Step
+12  DRV – Dir
+
+A0  Signal from 5 analog button plate 
+A4  SDA LCD i2c
+A5  SCL LCD i2c
+
+ARef  VCC buttons (VCC boutons)
+5V    DRV8825 Rst+Slp+M0+M1 //fix 1/8 Steps
+3,3V  HX711 - Vcc
+5V    LCD i2c – Vcc
+5V    Buzzer Vcc
+Gnd   LCD i2c – Gnd
+Gnd   HX711 Gnd / Buttons Gnd  / DRV8825 Gnd /Buzzer Gnd
+
++ Capacitor  >12V 100u / DRV Vmot
+- Capacitor  >12V 100u / DRV Gnd (mot)
+*/
+
+//LIBRARIES INCLUDED IN THE PROGRAM 
+#include <Wire.h>
+#include <EEPROM.h>
+#include <hd44780.h>
+#include <hd44780ioClass/hd44780_I2Cexp.h>
+#include <AccelStepper.h>
+#include <HX711.h>
+#include <avr/pgmspace.h>
+
+//I2C for LCD 
+hd44780_I2Cexp lcd;
+
+
+
+//fix values Const and Defines 
+
+ //Define PinOut
+  
+  //Buzzer defines
+  #define BUZZsig 5
+
+  // Stepper constant 
+  #define drvdirPin 12            // Direction Pin of the driver, needed for the Libary. We use only one direction
+  #define drvstepPin 11           // Impulsion pin of the driver, 1pulse=1step 
+  #define drvenPin 10             // Driver activation Pin, 0V=enable 
+
+  //Scale defines
+   #define s1dtPin 2
+   #define s1sckPin 3
+
+ // Memory 
+  const int address_startramp = 0;  // Addess for Memory, that stores: float startramp
+  const int address_endramp = 10;  // Stores float endramp
+  const int address_maxspeed = 20;  // Stores float minspeed
+  const int address_minspeed = 30;  // Stores float maxspeed
+  const int address_tolerance = 40;  // Stores float tolerance
+  const int address_autotara = 50;  // Stores bool autotara
+  const int address_Language = 53;  // Stores byte LAnguage
+  const int address_scaleunit = 56;  // Stores bool  scaleunit
+  const int address_SW1 = 60;       // Stores int(2byte) SW1 
+  const int address_SW2 = 63;       // Stores int SW2 
+  const int address_SW3 = 66;     // Stores int SW3
+  const int address_SW4 = 69;     // Stores int SW4
+  const int address_SW5 = 72;     // Stores tnt SW5
+  const int address_ScaleOffset = 80;  // Stores long ScaleOffset
+  const int address_ScaleFactor = 90;  // Stores float ScaleFactor
+  const int address_memory[]= {100,110,120,130,140}; //Memoryadresses.. watch how many needed 
+  const byte memspace = 5; //How many Memorys ? don't forget to give memory adresses!
+
+ //Menu
+  const byte numberofentrys =12; 
+
+ //Gramm/Grain
+  const float gr_gn= 15.432358; // Faktor to change gramm to grain
+  const byte avarage_number =7; //amount of Data to build an Average
+  
+  //Switches
+  const int noSWpressed = 900;//value returned to A0 superior to this when no button is pressed (0 - 1023)
+  const byte swtolerance = 10; //tolerance of tension read on A0 around the switch value (0 - 1023)
+
+  //beeps
+  const byte right_dose = 1;
+  const byte overdose_dose = 2;
+  const byte failed_dose = 3;
+  const int beep_time =500 ;
+
+  //
+  const unsigned long timeout=90000;
+
+  //LCD texts in English
+  const char str_startline1_en[] PROGMEM = " RADIN LOADER";   // maximum 16 sign !
+  const char str_startline2_en[] PROGMEM = " starting...";    // maximum 16 sign !
+  const char str_swcalib_en[] PROGMEM = "switch calibrate";   // maximum 15 sign !
+  const char str_pressSW_en[] PROGMEM = "press switch";       // maximum 14 sign !
+  const char str_memsave_en[] PROGMEM = "data saved";         // maximum 16 sign !
+  const char str_scalecalib_en[] PROGMEM = "scale calibrate"; // maximum 16 sign !
+  const char str_scaleempty_en[] PROGMEM = "empty Scale!";   // maximum 16 sign !
+  const char str_scaleentcaliweigth_en[] PROGMEM = "Cal.Weig.";    // maximum 8 sign !
+  const char str_overdosed_en[] PROGMEM = "overdosed";   // maximum 16 sign !
+  const char str_dosedone_en[] PROGMEM = "dosing finished";       // maximum 16 sign !
+  const char str_timeout_en[] PROGMEM = "stopp or timeout";         // maximum 16 sign !
+  const char str_ask_en[] PROGMEM = "are you sure?"; // maximum 15 sign !
+  const char str_memory_en[] PROGMEM = "Memory"; // maximum 14 sign !
+  const char str_on_en[] PROGMEM = "on"; // maximum 15 sign !
+  const char str_off_en[] PROGMEM = "off"; // maximum 15 sign !
+  const char str_english_en[] PROGMEM = "english"; // maximum 15 sign !
+  const char str_2ndlanguage_en[] PROGMEM = "german"; // maximum 15 sign !
+  const char str_3ndlanguage_en[] PROGMEM = "french"; // maximum 15 sign !
+
+  // LCD Texts second Language (deutsch)
+  const char str_startline1_2d[] PROGMEM = " RADIN LOADER ";  // maximum 16 sign !
+  const char str_startline2_2d[] PROGMEM = " startet..";      // maximum 16 sign !
+  const char str_swcalib_2d[] PROGMEM = "Taster Kalib.";      // maximum 15 sign !
+  const char str_pressSW_2d[] PROGMEM = "druecke Taster";      // maximum 14 sign !
+  const char str_memsave_2d[] PROGMEM = "Daten gesichert";    // maximum 16 sign !
+  const char str_scalecalib_2d[] PROGMEM = "Waage kalib.";    // maximum 16 sign !
+  const char str_scaleempty_2d[] PROGMEM = "Waage leeren!";  // maximum 16 sign !
+  const char str_scaleentcaliweigth_2d[] PROGMEM = "Kal.Gew.";      // maximum 8 sign !
+  const char str_overdosed_2d[] PROGMEM = "Ueberdosiert";      // maximum 16 sign !
+  const char str_dosedone_2d[] PROGMEM = "Dosieren Ende";      // maximum 16 sign !
+  const char str_timeout_2d[] PROGMEM = "Stop oder Zeitum";    // maximum 16 sign !
+  const char str_ask_2d[] PROGMEM = "sicher ?";    // maximum 15 sign !
+  const char str_memory_2d[] PROGMEM = "Speicher";    // maximum 15 sign !
+  const char str_on_2d[] PROGMEM = "EIN";    // maximum 15 sign !
+  const char str_off_2d[] PROGMEM = "AUS";    // maximum 15 sign !
+  const char str_english_2d[] PROGMEM = "englisch";    // maximum 15 sign !
+  const char str_2ndlanguage_2d[] PROGMEM = "deutsch";    // maximum 15 sign !
+  const char str_3ndlanguage_2d[] PROGMEM = "franzoes.";    // maximum 15 sign !
+
+  // LCD Texts third Language (french)
+  const char str_startline1_3d[] PROGMEM = " RADIN LOADER ";  // maximum 16 sign !
+  const char str_startline2_3d[] PROGMEM = " Demarrage...";      // maximum 16 sign !
+  const char str_swcalib_3d[] PROGMEM = "Calib. boutons";      // maximum 15 sign !
+  const char str_pressSW_3d[] PROGMEM = "App. /boutons";      // maximum 14 sign !
+  const char str_memsave_3d[] PROGMEM = "sauvegarde";    // maximum 16 sign !
+  const char str_scalecalib_3d[] PROGMEM = "Calib. pesee";    // maximum 16 sign !
+  const char str_scaleempty_3d[] PROGMEM = "Balance vide!";  // maximum 16 sign !
+  const char str_scaleentcaliweigth_3d[] PROGMEM = "CalPoids";      // maximum 8 sign !
+  const char str_overdosed_3d[] PROGMEM = "Surcharge";      // maximum 16 sign !
+  const char str_dosedone_3d[] PROGMEM = "Dose OK";      // maximum 16 sign !
+  const char str_timeout_3d[] PROGMEM = "Erreur";    // maximum 16 sign !
+  const char str_ask_3d[] PROGMEM = "etes vous sur?";    // maximum 15 sign !
+  const char str_memory_3d[] PROGMEM = "Memoire";    // maximum 15 sign !
+  const char str_on_3d[] PROGMEM = "on";    // maximum 15 sign !
+  const char str_off_3d[] PROGMEM = "off";    // maximum 15 sign !
+  const char str_english_3d[] PROGMEM = "english";    // maximum 15 sign !
+  const char str_2ndlanguage_3d[] PROGMEM = "allemand";    // maximum 15 sign !
+  const char str_3ndlanguage_3d[] PROGMEM = "francais";    // maximum 15 sign !
+
+  const byte number_languages = 3 ;//how many languages do we have ? 
+  
+ // Cobines Texts to String Array ( 2D Array) 
+  const char *const str_startline1[] PROGMEM = {str_startline1_en, str_startline1_2d, str_startline1_3d};
+  const char *const str_startline2[] PROGMEM = {str_startline2_en, str_startline2_2d, str_startline2_3d};
+  const char *const str_swcalib[] PROGMEM = {str_swcalib_en, str_swcalib_2d, str_swcalib_3d};
+  const char *const str_pressSW[] PROGMEM = {str_pressSW_en, str_pressSW_2d, str_pressSW_3d};
+  const char *const str_memsave[] PROGMEM = {str_memsave_en, str_memsave_2d, str_memsave_3d};
+  const char *const str_scalecalib[] PROGMEM = {str_scalecalib_en, str_scalecalib_2d, str_scalecalib_3d};
+  const char *const str_scaleempty[] PROGMEM = {str_scaleempty_en, str_scaleempty_2d, str_scaleempty_3d};
+  const char *const str_scaleentcaliweigth[] PROGMEM = {str_scaleentcaliweigth_en, str_scaleentcaliweigth_2d, str_scaleentcaliweigth_3d};
+  const char *const str_overdosed[] PROGMEM = {str_overdosed_en, str_overdosed_2d, str_overdosed_3d};
+  const char *const str_dosedone[] PROGMEM = {str_dosedone_en, str_dosedone_2d, str_dosedone_3d};
+  const char *const str_timeout[] PROGMEM = {str_timeout_en, str_timeout_2d, str_timeout_3d};
+  const char *const str_ask[] PROGMEM = {str_ask_en, str_ask_2d, str_ask_3d};
+  const char *const str_memory[] PROGMEM = {str_memory_en, str_memory_2d, str_memory_3d};
+  const char *const str_on[] PROGMEM = {str_on_en, str_on_2d, str_on_3d};
+  const char *const str_off[] PROGMEM = {str_off_en, str_off_2d, str_off_3d};
+  const char *const str_english[] PROGMEM = {str_english_en, str_english_2d, str_english_3d};
+  const char *const str_2ndlanguage[] PROGMEM = {str_2ndlanguage_en,str_2ndlanguage_2d,str_2ndlanguage_3d};
+  const char *const str_3ndlanguage[] PROGMEM = {str_3ndlanguage_en,str_3ndlanguage_2d,str_3ndlanguage_3d};
+
+  const String str_Setpoint[]=                     {"setpoint","Sollwert","Cible"}; //maximun 8 sign
+  const String str_actweigth[]=                    {"actual","Istwert","Actuel"}; //maximun 8 sign
+
+
+//Variables (Global)
+
+  // Buttons variables (Variables boutons)
+  int SW1; //value returned by button SW1 
+  int SW2; //value returned by button SW2 
+  int SW3; //value returned by button SW3 
+  int SW4; //value returned by button SW4 
+  int SW5; //value returned by button SW5 
+  bool SWcalib; //button calibration is required
+  byte SWnumber;  //button number for advices
+  int a0value;    //Temp Storage for analoge value
+
+  //scale variables
+  float W_Setpoint ;// The Setpoint @Startup, not in Memory! to much memora traffic evey time it changes to store it
+  float W_actual;   //the actual weight from scale, temp used to build average
+  long  ScaleOffset;   // digits from scale for tara (digits wihout load)
+  float ScaleFactor;   //factor to convert digits tu unit(g or gn)
+  byte scalecalib; // step in scalecalibration
+  float scalecalibweight =10.00; // Enter the weight here you usually use to calibrate the scale
+  float average[avarage_number]; // build an avarage of weight in the mainloop
+
+  //Dosing variables
+  float startramp ; // value before Setpoint, ramp dosing will be started 
+  float endramp ;   //value before Setpoint, slow dosing will be started
+  float maxspeed ; //Speed while fast dosing
+  float minspeed ; // Speed while slow dosing
+  float tolerance ; // tolerance to check if dosing was fine
+  bool dosedone;  // Bit for Dosing finished
+  bool overdose; // Bit for Overdosed
+  
+  //temp Variables 
+  unsigned int timer; // time in ms for value acceleration will be reduced every loop while button hold
+  char PufferChar[17]; //Buffer for LCD +1 Emergency Char 
+  unsigned long lastmillis; //Timer for Dosing every 110ms a weight will be read from HX711
+  unsigned long dosestart; // Time when dosing has been started for Timeout
+  byte show_dec; //amount of decimals while showing Values (2 for gn, 3 for gr)
+
+
+  //Parameters
+  byte Language ; // Set this value to set the language 0= eng, 1=german, 2=french
+  int new_Language ; // Menu the new Language that could be choosen
+  bool scaleunit ; //0=gramm , 1=grain
+  bool autotara ; // Parameter in Menu, tara @ dosing start
+  
+
+  //menu variables
+  bool menuon; //Menu is on, hold while loops
+  bool submenuon; // entered submenu for while loops
+  bool menuupdate; // new parameters to show on display(main menu)
+  bool updatememory; // something new to write in Memory
+  int  menuentry ; //where are we in menu
+  bool submenuupdate; // new parameters to show on display(submenu)
+
+  //memory var
+  int memlocation; //needed in Menu to know which location to  load/save
+  
+  
+   //Menu Text 
+   String menu[numberofentrys]; //a String holding the textes for the menu 
+
+
+  //Stepper Motor will be known as stepper
+  AccelStepper stepper(1, drvstepPin, drvdirPin); // "stepper" (driver, pin step, pin direction)
+  
+  //LoadModul on HX711 will be known as scale
+  HX711 scale; //Connect weighing inputs on pin
+
+void setup() {
+  // put your setup code here, to run once:
+
+  //start LCD Display
+  lcd.begin(16, 2); //declare LCD 16 chars and 2 rows and start it
+  
+  //Start Serial Port, Debug and more Information
+  Serial.begin(19200); //Serial initialisation 
+  Serial.println(F("Starting RADIN_LOADER")); // print text to serial
+
+  //Read needed Eeprom Data 
+  EEPROM.get(address_SW1, SW1);
+  EEPROM.get(address_SW2, SW2);
+  EEPROM.get(address_SW3, SW3);
+  EEPROM.get(address_SW4, SW4);
+  EEPROM.get(address_SW5, SW5);
+  EEPROM.get(address_ScaleOffset, ScaleOffset);
+  EEPROM.get(address_ScaleFactor, ScaleFactor);
+  EEPROM.get(address_startramp, startramp);
+  EEPROM.get(address_endramp, endramp);
+  EEPROM.get(address_maxspeed, maxspeed);
+  EEPROM.get(address_minspeed, minspeed);
+  EEPROM.get(address_tolerance, tolerance);
+  EEPROM.get(address_autotara, autotara);
+  EEPROM.get(address_Language, Language);
+  EEPROM.get(address_scaleunit, scaleunit);
+  EEPROM.get(address_memory[0], W_Setpoint); //Gets Memory 1 to set Setpoint @ Startup
+  Serial.println(F("Memory loaded")); // print text to serial
+
+  //load defaults if 0 in case you had the first run or not changed parameters yet
+  if (maxspeed==0){maxspeed=800;}
+  if (minspeed==0){minspeed=100;}
+  if (startramp==0){startramp=0.3;}
+  if (endramp==0){endramp=0.1;}
+
+  
+  //get texts in language
+  language(); // Load the Texts for the Menus in the right language
+  Serial.println(F("Language loaded")); // print text to serial
+  
+  //Show Start LCD
+  lcd.clear(); // clear LCD  for new textes
+  lcd.setCursor(0,0); //move LCD Cursor to Start Text from there
+  strcpy_P(PufferChar, (char *)pgm_read_word(&(str_startline1[Language])));  // Load the Text from Progmem in right language to Buffer
+  lcd.print(PufferChar); // Print Buffer 
+  lcd.setCursor(0,1);
+  strcpy_P(PufferChar, (char *)pgm_read_word(&(str_startline2[Language]))); 
+  lcd.print(PufferChar);
+
+  //Init AnalogIn 
+  pinMode(A0, INPUT); // PINMode A0 = analoge Input
+  Serial.print(F("Init Analog In0 First Value: ")) && Serial.println(analogRead(A0)); // Serial Text
+  //The analoge Input should be read in Setup first time, because the first value is always crap. 
+  //If you don't do an go in switch calibration wrong values will be stored
+  
+  //Init Buzzer 
+  pinMode(BUZZsig, OUTPUT); // Pin for Buzzer = Output
+  Serial.println(F("Init Buzzer done"));
+  
+  //stepper setup
+  pinMode(drvenPin, OUTPUT); //Pin= Output, other Pins are handled in Libary
+  digitalWrite(drvenPin, HIGH); // High=disable driver
+  stepper.setMaxSpeed(10000); // Maximum pulse rate to the driver, depends on magnetfields of motor
+  Serial.println(F("Init Stepper done"));
+  
+  //Scale beginn & Check
+  scale.begin(s1dtPin, s1sckPin); //start h711 
+  Serial.println(F("InitScale done"));
+  delay(100);
+  //check if scale is ready(doesn't work very well)
+  if (scale.is_ready())//check if scale is ready(doesn't work very well)
+  {
+  Serial.println(F("Scale is Ready"));
+  }
+  else
+  {
+  Serial.println(F("Scale error!!"));
+  }
+
+  //Check if Switch Calibration Required (Memory is empty or switch values are equal?) 
+  /*//Serial.print(F("SW1 Value: ")) && //Serial.println(SW1);
+  //Serial.print(F("SW2 Value: ")) && //Serial.println(SW2);
+  //Serial.print(F("SW3 Value: ")) && //Serial.println(SW3);
+  //Serial.print(F("SW4 Value: ")) && //Serial.println(SW4);
+  //Serial.print(F("SW5 Value: ")) && //Serial.println(SW5);
+  */
+  if(SW1 < 0 || SW1 > 1023 || SW1 == SW2 || SW1 == SW3 || SW1 == SW4|| SW1 == SW5)
+    {SWcalib = true;}
+  if(SW2 < 0 || SW2 > 1023 || SW2 == SW3 || SW2 == SW4|| SW2 == SW5)
+    {SWcalib = true;}
+  if(SW3 < 0 || SW3 > 1023 || SW3 == SW4|| SW3== SW5)
+    {SWcalib = true;}
+  if(SW4 < 0 || SW4 > 1023  || SW4 == SW5)
+    {SWcalib = true;}
+  if(SW5 < 0 || SW5 > 1023)
+    {SWcalib = true;}
+    
+  if(SWcalib) //calibration required
+  {
+    Serial.println(F("Scwitches need calibration"));
+    swcalibration();
+  }
+  else //values for switches are fine 
+  {
+    Serial.println(F("Switch Memory okay")); 
+  }
+
+  //Check if Memorydata for Scale exist
+  if(ScaleOffset == 0 || ScaleFactor == 0) // No Data = calibration
+  {
+    Serial.println(F("Scale needs calibration")); 
+    scalecalibration();
+  }
+  else // Data found, then load it from Memory to HX711
+  {
+    scale.set_offset(ScaleOffset); //Load Offset
+    scale.set_scale(ScaleFactor); // Load ScaleFactor ( makes digits to Unit)
+    Serial.println(F("Scale Memory loaded")); 
+  }
+
+  delay(1000); // Hold Starting Display a moment
+  lcd.clear();
+  Serial.println(F("Setup finished")); 
+
+  ///END of SETUP !!!!!
+}
+
+
+
+void loop() {
+//Main Routine showing Scale Value and wait for buttons to do something
+
+
+  // Build an scale average, we need that for smoothing the scale 
+  W_actual=0; // delete the last actual value
+  for(int i= avarage_number-1;i>0;i--) //shift the last values 
+  {
+  average[i]= average[i-1];
+  W_actual+=average[i]; //add all data to actual value
+  }
+  average[0]=scale.get_units(1);//get one value from hx711 (not more !, it takes to much time, we could miss a pressed button)
+  W_actual+=average[0];//add it to value
+  W_actual=W_actual/avarage_number; // divide now to have an average
+
+  // Put Texts on Display
+  lcd.setCursor(0,0);
+  lcd.print(str_Setpoint[Language]);
+  lcd.setCursor(0,1);
+  lcd.print(str_actweigth[Language]);
+  //Put weight values on LCD 
+  lcd_print_weight(W_actual,8,1); //actual weight& unit to LCD
+  lcd_print_weight(W_Setpoint,8,0); //Put Setpoint & unit to LCD
+
+  //check if a button is pressed
+  if(analogRead(A0) < noSWpressed) // a button is pressed
+  {
+   delay(10); // wait a short time, to prevent keybounce
+    a0value= analogRead(A0); //read value now again
+    if(a0value >= SW5-swtolerance && a0value <= SW5+swtolerance) // button 5 is pressed
+        {
+        dose();   //start a dosing process
+        }
+    if(a0value >= SW4-swtolerance && a0value <= SW4+swtolerance) // button 4 is pressed
+        { 
+        scale.tare(5);  // tara scale with 5 values 
+        Serial.println(F("Scale Tara"));   
+        }
+    if(a0value >= SW3-swtolerance && a0value <= SW3+swtolerance) // button 3 is pressed
+        {
+        W_Setpoint= weight_change_acc(SW3,W_Setpoint, -0.01,-0.01, 8, 0); // we lower the Setpoint, hold it go fast
+        Serial.print(F("new Setpoint"));
+        Serial.println(W_Setpoint);
+        }
+    if(a0value >= SW2-swtolerance && a0value <= SW2+swtolerance)// button 2 is pressed
+        {
+         W_Setpoint= weight_change_acc(SW2,W_Setpoint, 0.01,0.01, 8, 0);  // we increase the Setpoint, hold it go fast
+         Serial.print(F("new Setpoint"));
+         Serial.println(W_Setpoint);
+        }
+    if(a0value >= SW1-swtolerance && a0value <= SW1+swtolerance)// button 1 is pressed
+        {
+         mymenu();  //we go into the menu
+         
+        }
+ }     
+
+//Main Routine End              
+}
+
+
+
+
+
+
+void language() 
+//here we load the Menu textes in the language that is used (textes in RAM) 
+{
+  //all Menu Texts 15 Sign max
+  if(Language == 0){ //if english ######################################
+
+  menu[0]="memory load";
+  menu[1]="memory save";
+  menu[2]="calibrate scale";
+  menu[3]="unit";
+  menu[4]="autotara";
+  menu[5]="dose speed fast";
+  menu[6]="dose speed slow";
+  menu[7]="ramp start";
+  menu[8]="ramp end";
+  menu[9]="tolerance";
+  menu[10]="language";
+  menu[11]="factory reset";
+
+  }//end if language = 0 ##########################################
+
+
+  if(Language == 1){ //if 2nd language(german) ######################################
+  
+  //Menu max 15 sign
+  menu[0]="Memory laden";
+  menu[1]="Memory sichern";
+  menu[2]="Waage Kalib.";
+  menu[3]="Einheit";
+  menu[4]="Auto tarieren";
+  menu[5]="Dos. schnell";
+  menu[6]="Dos. langsam";
+  menu[7]="Rampe Start";
+  menu[8]="Rampe Ende";
+  menu[9]="Toleranz";
+  menu[10]="Sprache";
+  menu[11]="Werkseinstel.";
+
+  }//end if language = 1 ##########################################
+
+  if(Language == 2){ //if 3nd language(french) ######################################
+  
+  //Menu max 15 sign
+  menu[0]="Memoire chargee";
+  menu[1]="Memoire sauvee";
+  menu[2]="calib. pesee";
+  menu[3]="Unite";
+  menu[4]="Tare auto";
+  menu[5]="V. rapide";
+  menu[6]="V. Lente";
+  menu[7]="Demarrage";
+  menu[8]="Arret";
+  menu[9]="Tolerance";
+  menu[10]="Language";
+  menu[11]="Reinitialiser";
+
+  }//end if language = 2 ##########################################
+  
+}
+
+void swcalibration()
+// calibrate the switches ( after factory reset or first run ever)
+//  analogvalues will be checked, an sorted to the buttons
+{
+ 
+  Serial.println(F("switch calibration started"));
+  Serial.print(F("NoSwitch =")) && Serial.println(analogRead(A0)); // Read the Value when no switch is pressed
+  SWnumber = 1; // Set the first switch to be calibrated
+
+  //write Text to LCD, ask for the first switch to be pressed by user
+  lcd.clear();
+  lcd.setCursor(0,0);
+  strcpy_P(PufferChar, (char *)pgm_read_word(&(str_swcalib[Language]))); 
+  lcd.print(PufferChar);
+  lcd.setCursor(0,1);
+  strcpy_P(PufferChar, (char *)pgm_read_word(&(str_pressSW[Language]))); 
+  lcd.print(PufferChar);
+  lcd.setCursor(15,1);
+  lcd.print(SWnumber);
+
+  //While Loop, stay here until all 5 buttons are finished. 
+  while(SWcalib == true) 
+  {
+  if(analogRead(A0) < noSWpressed) //a button is pressed 
+    {
+    delay(50); // make sue bounce protection
+    a0value= analogRead(A0); //read again ! In moment pressed a wrong value possible (bounce)
+    Serial.println(F("Button pressed"));
+    //clear second Line and writa data saved
+    lcd.setCursor(0,1);
+    lcd.print(F("                ")); //clear only line 1
+    lcd.setCursor(0,1);
+    strcpy_P(PufferChar, (char *)pgm_read_word(&(str_memsave[Language]))); 
+    lcd.print(PufferChar);
+    //check where we are and save value to the button
+     if(SWnumber == 1) // we are @Button 1
+     {
+        SW1 = a0value ; //set value to variable
+        EEPROM.put(address_SW1, SW1); // save it to memory
+        Serial.print(F("Saved SW1 = ")) && Serial.println(a0value);
+      }//end if
+
+      if(SWnumber == 2)// we are @Button 2
+      {
+        SW2 = a0value;//set value to variable
+        EEPROM.put(address_SW2, SW2);// save it to memory
+        Serial.print(F("Saved SW2= ")) && Serial.println(a0value);
+      }//end if
+
+      if(SWnumber == 3)// we are @Button 3
+      {
+        SW3 = a0value;//set value to variable
+        EEPROM.put(address_SW3, SW3);// save it to memory
+        Serial.print(F("Saved SW3= ")) && Serial.println(a0value);
+      }//end if
+      
+      if(SWnumber == 4)// we are @Button 4
+      {
+        SW4 = a0value;//set value to variable
+        EEPROM.put(address_SW4, SW4);// save it to memory
+        Serial.print(F("Saved SW4= ")) && Serial.println(a0value);
+      }//end if 
+
+      if(SWnumber == 5)// we are @Button 5
+      {
+        SW5 = a0value;//set value to variable
+        EEPROM.put(address_SW5, SW5);// save it to memory
+        Serial.print(F("Saved SW5= ")) && Serial.println(a0value);       
+      }//end if
+    SWnumber++; //next button now :-) 
+    delay(4000); // time to release button and show "memory saved"
+    //show the next button on LCD to calibrate
+    lcd.clear();
+    lcd.setCursor(0,0);
+    strcpy_P(PufferChar, (char *)pgm_read_word(&(str_swcalib[Language]))); 
+    lcd.print(PufferChar);
+    lcd.setCursor(0,1);
+    strcpy_P(PufferChar, (char *)pgm_read_word(&(str_pressSW[Language]))); 
+    lcd.print(PufferChar);
+    lcd.setCursor(15,1);
+    lcd.print(SWnumber);
+  } 
+  
+  if(SWnumber >= 6) // all five buttons are calibrated time to leave calibration 
+  {
+    Serial.println(F("End Switch Calibration"));
+    SWcalib = false; // finished, leave while loop
+    lcd.clear();
+  }
+}
+}
+
+void scalecalibration()
+{
+  //calibrate scale, zero point and second point by weight
+
+  //LCD texts for starting calibration
+  lcd.clear();
+  lcd.setCursor(0,0);
+  strcpy_P(PufferChar, (char *)pgm_read_word(&(str_scalecalib[Language]))); 
+  lcd.print(PufferChar);
+  Serial.println(F("scale calibration started"));
+  delay(1000); //Show text for 1Sek
+  scalecalib=1; //starting calibration with step 1
+  while (scalecalib != 0) //stay into loop until calibration finished
+  { 
+      switch (scalecalib) 
+      {
+      case 1://step 1 show text for zeropoint calibration
+        lcd.clear();
+        lcd.setCursor(0,0);
+        strcpy_P(PufferChar, (char *)pgm_read_word(&(str_scaleempty[Language]))); 
+        lcd.print(PufferChar);
+        delay(500);// after Scale is empty wait to get a few scale values to Offset
+        lcd.setCursor(0,1);
+        strcpy_P(PufferChar, (char *)pgm_read_word(&(str_pressSW[Language]))); 
+        lcd.print(PufferChar);
+        lcd.setCursor(15,1);
+        lcd.print(F("5"));
+        scalecalib=2; //next step 
+        break;
+        
+      case 2: //step 2 wait for switch 5 to do a zeropoint calibration
+        a0value= analogRead(A0); //analog read to find if button is pressed
+        if(a0value >= SW5-swtolerance && a0value <= SW5+swtolerance)//button 5 is pressed
+        {
+          ScaleOffset=scale.read_average(10); // get digts from loop (average of 10 )
+          EEPROM.put(address_ScaleOffset, ScaleOffset); // put as tara to memory
+          scale.set_offset(ScaleOffset); //load to hx711 for tara 
+          Serial.println(F("scale offset calibrated"));
+          Serial.print(F("Scale Offset= ")) && Serial.println(ScaleOffset);
+          //lcd print memory is saved
+          lcd.clear();
+          lcd.setCursor(0,1);
+          strcpy_P(PufferChar, (char *)pgm_read_word(&(str_memsave[Language]))); 
+          lcd.print(PufferChar);
+          delay(2000);// show text for a short time
+          //print LCD texts for calibration with calibration weight
+          lcd.clear();
+          lcd.setCursor(0,0);
+          strcpy_P(PufferChar, (char *)pgm_read_word(&(str_scaleentcaliweigth[Language]))); 
+          lcd.print(PufferChar);
+          lcd.setCursor(15,0);
+          lcd.print(F("g"));
+          lcd.setCursor(0,1);
+          strcpy_P(PufferChar, (char *)pgm_read_word(&(str_pressSW[Language]))); 
+          lcd.print(PufferChar);
+          lcd.setCursor(15,1);
+          lcd.print(F("5"));
+          scalecalib=3; //next step
+        }
+        break;
+       
+      case 3: // step calibrate the entered weight
+       lcd_print_weight(scalecalibweight,8, 0); // print the actual calibration weight 
+       a0value= analogRead(A0); // read analog for buttons
+       delay(50);// delay for button bouncing 
+       if(a0value >= SW2-swtolerance && a0value <= SW2+swtolerance) // button 2 is pressed incre<ase calibration weight
+       {
+        scalecalibweight= weight_change_acc(SW2,scalecalibweight, 0.001 , 0.001, 8, 0);
+       
+       }
+       if(a0value >= SW3-swtolerance && a0value <= SW3+swtolerance) // button 3 is pressed lower calibration weight
+       {
+        scalecalibweight= weight_change_acc(SW3,scalecalibweight, -0.001, -0.001, 8, 0);
+           
+       }
+       if(a0value >= SW5-swtolerance && a0value <= SW5+swtolerance)//button 5 calibrate scale with calibration weight  
+       {
+        ScaleFactor= ((float)scale.read_average(10)-(float)ScaleOffset)/scalecalibweight; // math find scalefactor for g
+        if(scaleunit == 1 ) //actual unit is gn 
+        {
+        ScaleFactor= ScaleFactor/gr_gn; //change scalefactor to gn 
+        }
+        EEPROM.put(address_ScaleFactor, ScaleFactor); //write scale factor to memory
+        scale.set_scale(ScaleFactor); //set scale factor to hx711
+        // some info to Serial 
+        Serial.print(F("Scale Calibtraion weigth = ")) && Serial.println(scalecalibweight); 
+        Serial.print(F("Scale Calibtraion raw weigth = ")) && Serial.println(scale.read_average(10));
+        Serial.print(F("Scale Calibtraion factor = ")) && Serial.println(ScaleFactor);
+        lcd.clear();
+        scalecalib=0; //Exit Calibration !!  
+         
+       }
+        break;
+      default:
+       // if nothing else matches, do the default
+       // default is optional
+        break;
+      }
+    } 
+  }
+
+
+float weight_change_acc(int button, float value, float add_g,float add_gn, byte lcd_cursor, byte lcd_line)
+// A function to Adjust weight values and show them on disply, hold but to accelerate value change 
+ {
+  //direction by negative add values
+    timer =200;
+    while(a0value >= button-swtolerance && a0value <= button+swtolerance) // the buttons is pressed
+    {
+      
+      
+      timer=timer/1.1f; // reduce timer by every loop the button is pressed 
+      if(scaleunit==0) // g is unit 
+      {
+      value=value+add_g; // add the value for g
+      }
+      else //gn is unit 
+      {
+      value=value+add_gn; //add the value for gn
+      }
+      lcd_print_weight(value,lcd_cursor,lcd_line); //print the atual weight you are changing  on LCD 
+      delay(timer); // time to wait for next loop 
+      a0value=analogRead(A0);
+    }
+    return value;
+ }
+
+ float speed_change_acc(int button, float value, float add, byte lcd_cursor, byte lcd_line)
+ {
+  // A function to Adjust a  not weight value and show it on disply, hold but to accelerate value change 
+  //direction by negative add values
+    timer =200;
+    while(a0value >= button-swtolerance && a0value <= button+swtolerance) // the buttons is pressed
+    {
+ 
+      timer=timer/1.1f; // reduce timer by every loop the button is pressed 
+      value=value+add; // add the value
+      lcd.setCursor(lcd_cursor,lcd_line);//print the atual value you are changing  on LCD 
+      lcd.print(value); 
+      delay(timer);// time to wait for next loop 
+      a0value=analogRead(A0);
+    }
+    return value;
+ }
+
+void dose()
+//dosing process is started 
+{
+  //print LCD infos 
+  Serial.println(F("dosing started"));
+  lcd.clear();
+  lcd.setCursor(0,0);
+  lcd.print(str_Setpoint[Language]);
+  lcd.setCursor(0,1);
+  lcd.print(str_actweigth[Language]);
+  lcd_print_weight(W_actual,8,1);
+  lcd_print_weight(W_Setpoint,8,0);
+  
+  digitalWrite(drvenPin, LOW); //enable stepper
+  if(autotara==1) // autotara is choosen
+  {
+  scale.tare(7);  //tara scale
+  }
+  dosestart=millis(); //remember the moment dosing is started for timeout
+  dosedone=0; //dosing not done yet 
+  overdose=0; // not overdosed yet 
+  a0value=analogRead(0); // read analog value to make sure there is no old value 
+  while(dosedone == 0 && (millis() - dosestart < timeout)&&((a0value > SW4+swtolerance) || (a0value < SW4-swtolerance)))//Dose until finished or Timeout or sw4 is pressed
+    {
+    a0value=analogRead(0); // check if button is pressed
+    W_actual=scale.get_units(7);//get Units from Scale high precision
+    
+    if (W_Setpoint <= (W_actual+tolerance) && W_Setpoint >= (W_actual-tolerance)) // dosing in in Tolerancelimit --- finished
+    {
+      dosedone=1; // dosing finished 
+    }
+    if ((W_actual-W_Setpoint) > tolerance) // dosing over tolerance limit 
+    {
+      overdose=1; // dosing done 
+      dosedone=1; // but overdosed
+    }
+    
+    lcd_print_weight(W_actual,8,1); // put dosed value on lcd 
+    if((W_Setpoint-W_actual) >= startramp) //starting fast dosing
+      {
+      Serial.println(F("fast")); 
+      stepper.setSpeed(maxspeed*8);//max speed and 1/8 steps 
+      while((W_Setpoint-W_actual >= startramp )&& (millis() - dosestart < timeout)&&((a0value > SW4+swtolerance) || (a0value < SW4-swtolerance))) //stay in fast dosing
+        {
+          lastmillis=millis();//start tickling time
+          while((millis() - lastmillis < 110)&& (millis() - dosestart < timeout)) //dose and every 110ms sclae weight
+            {
+              stepper.runSpeed();  // turn the stepper motor
+            }
+           W_actual=scale.get_units(1);//get one Unit from Scale
+           lcd_print_weight(W_actual,8,1); // show weight on display 
+           a0value=analogRead(0);
+        }
+      
+      }
+
+    if(((W_Setpoint-W_actual) >= endramp)&& ((W_Setpoint-W_actual) < startramp)) //starting ramp dosing
+      {
+      Serial.println(F("ramp"));
+      while((W_Setpoint-W_actual >= endramp )&& (millis() - dosestart < timeout)&&((a0value > SW4+swtolerance) || (a0value < SW4-swtolerance))) //stay in ramp dosing
+        {
+          stepper.setSpeed(8*((maxspeed-minspeed)/(startramp-endramp))*(W_Setpoint-W_actual-endramp)); // 1/8steps =x8 build a linear ramp
+          lastmillis=millis();//start tickling time
+          while((millis() - lastmillis < 110)&& (millis() - dosestart < timeout)) //&& a0value > SW4+swtolerance && a0value < SW4-swtolerance   dose and every 110ms sclae weight
+            {
+            stepper.runSpeed();  // turn the steppermotor
+            }
+           W_actual=scale.get_units(2);//get Units from Scale 
+           lcd_print_weight(W_actual,8,1); 
+           a0value=analogRead(0);
+        }
+      
+      }
+      if(((W_Setpoint-W_actual) >= 0)&& ((W_Setpoint-W_actual) < endramp)) //starting slow dosing
+      {
+      Serial.println(F("slow"));
+      stepper.setSpeed(minspeed); // min speed 
+      while((W_Setpoint-W_actual >= 0 )&& (millis() - dosestart < timeout)&&((a0value > SW4+swtolerance) || (a0value < SW4-swtolerance))) //stay in ramp dosing
+        {
+          stepper.setSpeed(minspeed); // min speed
+          lastmillis=millis();//start tickling time
+          while((millis() - lastmillis < 110)&& (millis() - dosestart < timeout)) //dose and every 110ms sclae weight
+            {
+            stepper.runSpeed();  
+            }
+           W_actual=scale.get_units(4);//get Units from Scale 
+           lcd_print_weight(W_actual,8,1); 
+           a0value=analogRead(0);
+        }
+      
+      }
+  
+  
+  
+  //end
+    }//big while Ends
+  digitalWrite(drvenPin, HIGH); // High=disable driver
+  lcd.clear();
+  if(overdose==1) // dosing finished overdosed
+  {
+   Serial.println(F("Overdosed")); 
+   lcd.setCursor(0,0);
+   strcpy_P(PufferChar, (char *)pgm_read_word(&(str_overdosed[Language]))); 
+   lcd.print(PufferChar);
+   lcd_print_weight(W_actual,8,1); 
+   for(int i= 0;i<=(2*overdose_dose)-1;i++) //Beeps for overdose
+      {
+       digitalWrite(BUZZsig, !digitalRead(BUZZsig));  
+       delay(beep_time);         
+      }
+         
+  }
+  else if(dosedone==1)// dosing finished within tolerance
+  {
+    Serial.println(F("Dose finished"));
+    lcd.setCursor(0,0);
+    strcpy_P(PufferChar, (char *)pgm_read_word(&(str_dosedone[Language]))); 
+    lcd.print(PufferChar);
+    lcd_print_weight(W_actual,8,1); 
+    for(int i= 0;i<=(2*right_dose)-1;i++) //Beeps for overdose
+      {
+       digitalWrite(BUZZsig, !digitalRead(BUZZsig));  
+       delay(beep_time);         
+      }
+    delay(1500);
+  }
+  else // dosing endet with error 
+  {
+    button_off(SW4);
+    Serial.println(F("stopped||timeout")); // 
+    lcd.setCursor(0,0);
+    strcpy_P(PufferChar, (char *)pgm_read_word(&(str_timeout[Language]))); 
+    lcd.print(PufferChar);
+    lcd_print_weight(W_actual,8,1); 
+    for(int i= 0;i<=(2*failed_dose)-1;i++) //Beeps for overdose
+      {
+       digitalWrite(BUZZsig, !digitalRead(BUZZsig));  
+       delay(beep_time);         
+      }
+  }
+ lcd.clear();
+ }
+
+
+ void mymenu() // start the menu
+ {
+  Serial.println(F("enter Menu")); // 
+  menuon=1; 
+  menuentry=0;
+  delay(100); // wait buuton to be fully switched, keybounce protection
+  button_off(SW1); //wait until button one is released
+  
+  while(menuon) //stay here until menu will be left
+  {
+    menuupdate=0;
+    //update Menu textes
+    // if menuentry  <0 or >number of entrys
+    if (menuentry < 0){menuentry= numberofentrys-1;}
+    if (menuentry > numberofentrys-1){menuentry=0;} 
+      
+    lcd.clear();
+    lcd.setCursor(0,0);
+    lcd.print(F(">"));
+    lcd.print(menu[menuentry]);
+    Serial.println(menu[menuentry]); // 
+    
+  while(menuon && !menuupdate)
+  {
+   //while wait für buttons to do something
+    if(analogRead(A0) < noSWpressed)
+    {
+      delay(10);
+      a0value= analogRead(A0);
+      if(a0value >= SW5-swtolerance && a0value <= SW5+swtolerance)// Enter is pressed do something
+        {
+         button_off(SW5); 
+         lcd.clear();
+         lcd.setCursor(1,0);
+         lcd.print(menu[menuentry]);
+         lcd.setCursor(0,1);
+         lcd.print(F(">"));
+         switch(menuentry) //decide what to do
+          {
+          case 0: // load memory submenu
+          memory_load();
+          break; // event on clicked menu point
+          case 1: //save memorys submenu
+          memory_save(); // event on clicked menu point
+          break;
+          case 2:// calibrate scale submenu & event
+          submenu_calibrate();
+          break;
+          case 3:// change unit (gramm to grain)
+          submenu_unit();
+          break;
+          case 4:
+          submenu_autotara();
+          break;
+          case 5:
+          submenu_dosefast();
+          break;
+          case 6:
+          submenu_doseslow();
+          break;
+          case 7:
+          submenu_rampstart();
+          break;
+          case 8:
+          submenu_rampend();
+          break;
+          case 9:
+          submenu_tolerance();
+          break;
+          case 10:
+          submenu_language();
+          break;
+          case 11:
+          submenu_reset();
+          break;
+          default:
+          
+          break;
+          } 
+        }
+        
+      if(a0value >= SW3-swtolerance && a0value <= SW3+swtolerance)
+        {
+        menuentry++;
+        button_off(SW3);//wait until button one is released  
+        menuupdate=1;
+        }
+      if(a0value >= SW2-swtolerance && a0value <= SW2+swtolerance)
+        {
+        menuentry--; 
+        button_off(SW2);
+        menuupdate=1;
+        }
+      if(a0value >= SW1-swtolerance && a0value <= SW1+swtolerance)//menu button is tipped, leave the menu
+        { 
+         lcd.clear();
+         button_off(SW1);
+         menuon=0; 
+        }
+    }
+   
+  }
+  
+  }//leaving menu
+  Serial.println(F("Exit Menu")); // 
+
+  
+ } 
+
+
+ void memory_save()//the hole  submenu  when saving a memory 
+ {
+            strcpy_P(PufferChar, (char *)pgm_read_word(&(str_memory[Language]))); 
+            lcd.print(PufferChar);
+            lcd.setCursor(14,1);
+            lcd.print(memlocation+1);
+            submenuon=1;
+            while(submenuon)
+            {
+            
+              if(analogRead(A0) < noSWpressed)
+                {
+               delay(10);
+               a0value= analogRead(A0);
+                if(a0value >= SW1-swtolerance && a0value <= SW1+swtolerance)
+                {
+                  button_off(SW1);
+                  a0value= analogRead(A0);
+                  menuupdate=1;
+                  submenuon=0;
+                }
+                if(a0value >= SW2-swtolerance && a0value <= SW2+swtolerance)
+                {
+                  button_off(SW2);
+                  memlocation++;
+                  if (memlocation >= memspace-1){memlocation = memspace-1;} 
+                  lcd.setCursor(14,1);
+                  lcd.print(memlocation+1);
+                
+                }
+                if(a0value >= SW3-swtolerance && a0value <= SW3+swtolerance)
+                {
+                  button_off(SW3);
+                  memlocation--;
+                  if (memlocation < 0){memlocation= 0;}
+                  lcd.setCursor(14,1);
+                  lcd.print(memlocation+1);
+                }
+                if(a0value >= SW5-swtolerance && a0value <= SW5+swtolerance)
+                {
+                  button_off(SW5);
+                  EEPROM.put(address_memory[memlocation], W_Setpoint);
+                  lcd.clear();
+                  lcd.setCursor(0,1);
+                  strcpy_P(PufferChar, (char *)pgm_read_word(&(str_memsave[Language]))); 
+                  lcd.print(PufferChar);
+                  delay(1500);
+                  lcd.clear();
+                  menuon=0;
+                  submenuon=0;
+              }
+              }
+          }
+  }
+
+void memory_load()//whole submenu event for memory loading
+{
+            strcpy_P(PufferChar, (char *)pgm_read_word(&(str_memory[Language]))); 
+            lcd.print(PufferChar);
+            lcd.setCursor(14,1);
+            lcd.print(memlocation+1);
+            submenuon=1;
+            while(submenuon)
+            {
+            
+              if(analogRead(A0) < noSWpressed)
+                {
+               delay(10);
+               a0value= analogRead(A0);
+                if(a0value >= SW1-swtolerance && a0value <= SW1+swtolerance)
+                {
+                  button_off(SW1);
+                  a0value= analogRead(A0);
+                  menuupdate=1;
+                  submenuon=0;
+                }
+                if(a0value >= SW2-swtolerance && a0value <= SW2+swtolerance)
+                {
+                  button_off(SW2);
+                  memlocation++;
+                  if (memlocation >= memspace-1){memlocation = memspace-1;} 
+                  lcd.setCursor(14,1);
+                  lcd.print(memlocation+1);
+                
+                }
+                if(a0value >= SW3-swtolerance && a0value <= SW3+swtolerance)
+                {
+                  button_off(SW3);
+                  memlocation--;
+                  if (memlocation < 0){memlocation= 0;}
+                  lcd.setCursor(14,1);
+                  lcd.print(memlocation+1);
+                }
+                if(a0value >= SW5-swtolerance && a0value <= SW5+swtolerance)
+                {
+                  button_off(SW5);
+                  EEPROM.get(address_memory[memlocation],W_Setpoint );
+                  menuon=0;
+                  submenuon=0;
+              }
+              }
+          }
+}
+
+void submenu_calibrate()
+{
+          strcpy_P(PufferChar, (char *)pgm_read_word(&(str_ask[Language]))); 
+          lcd.print(PufferChar);
+          submenuon=1;
+          while(submenuon)
+          {
+            if(analogRead(A0) < noSWpressed)
+              {
+              delay(10);
+              a0value= analogRead(A0);
+              if(a0value >= SW1-swtolerance && a0value <= SW1+swtolerance)
+              {
+                button_off(SW1);
+                a0value= analogRead(A0);
+                menuupdate=1;
+                submenuon=0;
+                
+              }
+              if(a0value >= SW5-swtolerance && a0value <= SW5+swtolerance)
+              {
+                button_off(SW5);
+                lcd.clear();
+                scalecalibration();
+                menuon=0;
+                submenuon=0;
+              }
+              }
+          } 
+}
+
+void submenu_unit()
+{
+            if(scaleunit==0)
+            {
+            lcd.print(" g");
+            }
+            else
+            {
+            lcd.print("gn");
+            }
+            submenuon=1;
+            while(submenuon)
+            {
+            
+              if(analogRead(A0) < noSWpressed)
+                {
+               delay(10);
+               a0value= analogRead(A0);
+                if((a0value >= SW1-swtolerance && a0value <= SW1+swtolerance)||(a0value >= SW5-swtolerance && a0value <= SW5+swtolerance))
+                {
+                  button_off(SW1);
+                  button_off(SW5);
+                  a0value= analogRead(A0);
+                  menuupdate=1;
+                  submenuon=0;
+                }
+                if(a0value >= SW2-swtolerance && a0value <= SW2+swtolerance)
+                {
+                  button_off(SW2);
+                  if(scaleunit==1)
+                  {
+                  lcd.setCursor(1,1);
+                  lcd.print(" g");
+                  scaleunit=0;
+                  ScaleFactor= ScaleFactor*gr_gn;
+                  startramp= (float)((long)(startramp/gr_gn*1000L))/(1000);
+                  endramp= (float)((long)(endramp/gr_gn*1000L))/(1000);
+                  tolerance= (float)((long)(tolerance/gr_gn*1000L))/(1000);
+                  updatememory=1;
+                  for(int i= 0;i<=memspace-1;i++)
+                  {
+                  EEPROM.get(address_memory[i], W_Setpoint);
+                  W_Setpoint= (float)((long)(W_Setpoint/gr_gn*1000L))/(1000);
+                  EEPROM.put(address_memory[i], W_Setpoint);
+                  }
+                  }
+                  
+          
+                
+                }
+                if(a0value >= SW3-swtolerance && a0value <= SW3+swtolerance)
+                {
+                  button_off(SW3);
+                  if(scaleunit==0)
+                  {
+                  lcd.setCursor(1,1);
+                  lcd.print("gn");
+                  scaleunit=1;
+                  ScaleFactor= ScaleFactor/gr_gn;
+                  startramp= (float)((long)(startramp*gr_gn*100L))/(100);
+                  endramp= (float)((long)(endramp*gr_gn*100L))/(100);
+                  tolerance= (float)((long)(tolerance*gr_gn*100L))/(100);
+                  updatememory=1;
+                  for(int i= 0;i<=memspace-1;i++)
+                  {
+                  EEPROM.get(address_memory[i], W_Setpoint);
+                  W_Setpoint= (float)((long)(W_Setpoint*gr_gn*100L))/(100);
+                  EEPROM.put(address_memory[i], W_Setpoint);
+                  }
+                  
+                  }
+                  
+                }
+                  if(updatememory)
+                  {
+                  EEPROM.put(address_ScaleFactor, ScaleFactor);
+                  EEPROM.put(address_startramp, startramp);
+                  EEPROM.put(address_endramp, endramp);
+                  EEPROM.put(address_tolerance, tolerance);
+                  EEPROM.put(address_scaleunit, scaleunit);
+                  scale.set_scale(ScaleFactor);
+                  EEPROM.get(address_memory[0], W_Setpoint);
+                  updatememory=0;
+                  }
+              }
+          }
+  
+}
+
+
+
+void submenu_autotara()
+{
+            if(autotara==0)
+            {
+            strcpy_P(PufferChar, (char *)pgm_read_word(&(str_off[Language]))); 
+            lcd.print(PufferChar);
+            }
+            else
+            {
+            strcpy_P(PufferChar, (char *)pgm_read_word(&(str_on[Language]))); 
+            lcd.print(PufferChar);
+            }
+            //while(!((analogRead(0) > SW5+swtolerance) || (analogRead(0) < SW5-swtolerance)));
+            submenuon=1;
+            while(submenuon)
+            {
+            
+              if(analogRead(A0) < noSWpressed)
+                {
+               delay(10);
+               a0value= analogRead(A0);
+                if((a0value >= SW1-swtolerance && a0value <= SW1+swtolerance)||(a0value >= SW5-swtolerance && a0value <= SW5+swtolerance))
+                {
+                  button_off(SW1);
+                  button_off(SW5);
+                  a0value= analogRead(A0);
+                  menuupdate=1;
+                  submenuon=0;
+                }
+                if(a0value >= SW2-swtolerance && a0value <= SW2+swtolerance)
+                {
+                  button_off(SW2);
+                  if(autotara==1)
+                  {
+                  lcd.setCursor(1,1);
+                  strcpy_P(PufferChar, (char *)pgm_read_word(&(str_off[Language]))); 
+                  lcd.print(PufferChar);
+                  lcd.print(F(" "));
+                  autotara=0;
+                  EEPROM.put(address_autotara, autotara);
+                  }
+                  
+          
+                
+                }
+                if(a0value >= SW3-swtolerance && a0value <= SW3+swtolerance)
+                {
+                  button_off(SW3);
+                  
+                  if(autotara==0)
+                  {
+                  lcd.setCursor(1,1);
+                  strcpy_P(PufferChar, (char *)pgm_read_word(&(str_on[Language]))); 
+                  lcd.print(PufferChar);
+                  lcd.print(F(" "));
+                  autotara=1;
+                  EEPROM.put(address_autotara, autotara);
+                  }
+                  
+                  }
+                  
+                }
+              }
+}
+  
+
+void submenu_dosefast()
+{
+  lcd.setCursor(3,1);
+  lcd.print(maxspeed);
+  submenuon=1;
+  while(submenuon)
+            {
+            
+              if(analogRead(A0) < noSWpressed)
+                {
+               delay(10);
+               a0value= analogRead(A0);
+                if((a0value >= SW1-swtolerance && a0value <= SW1+swtolerance)||(a0value >= SW5-swtolerance && a0value <= SW5+swtolerance))
+                {
+                  button_off(SW1);
+                  button_off(SW5);
+                  a0value= analogRead(A0);
+                  EEPROM.put(address_maxspeed, maxspeed);
+                  menuupdate=1;
+                  submenuon=0;
+                 
+                }
+                if(a0value >= SW2-swtolerance && a0value <= SW2+swtolerance)
+                {
+                  maxspeed =speed_change_acc(SW2, maxspeed, 1.0, 3, 1);
+                  button_off(SW2);
+
+                  }
+                  
+          
+                
+                }
+                if(a0value >= SW3-swtolerance && a0value <= SW3+swtolerance)
+                {
+                  maxspeed =speed_change_acc(SW3, maxspeed, -1.0, 3, 1);
+                  button_off(SW3);
+                  
+                  
+                  
+                  }
+                  
+                }
+              }
+
+
+
+
+              
+void submenu_doseslow()
+{
+  lcd.setCursor(3,1);
+  lcd.print(minspeed);
+  submenuon=1;
+  while(submenuon)
+            {
+            
+              if(analogRead(A0) < noSWpressed)
+                {
+               delay(10);
+               a0value= analogRead(A0);
+                if((a0value >= SW1-swtolerance && a0value <= SW1+swtolerance)||(a0value >= SW5-swtolerance && a0value <= SW5+swtolerance))
+                {
+                  button_off(SW1);
+                  button_off(SW5);
+                  a0value= analogRead(A0);
+                  EEPROM.put(address_minspeed, minspeed);
+                  menuupdate=1;
+                  submenuon=0;
+                 
+                }
+                if(a0value >= SW2-swtolerance && a0value <= SW2+swtolerance)
+                {
+                  minspeed =speed_change_acc(SW2, minspeed, 1.0, 3, 1);
+                  button_off(SW2);
+
+                  }
+                  
+          
+                
+                }
+                if(a0value >= SW3-swtolerance && a0value <= SW3+swtolerance)
+                {
+                  minspeed =speed_change_acc(SW3, minspeed, -1.0, 3, 1);
+                  button_off(SW3);
+                  
+                  
+                  
+                  }
+                  
+                }
+              }
+
+void submenu_rampstart()
+{
+  lcd_print_weight(startramp,3, 1);
+  submenuon=1;
+  while(submenuon)
+            {
+            
+              if(analogRead(A0) < noSWpressed)
+                {
+               delay(10);
+               a0value= analogRead(A0);
+                if((a0value >= SW1-swtolerance && a0value <= SW1+swtolerance)||(a0value >= SW5-swtolerance && a0value <= SW5+swtolerance))
+                {
+                  button_off(SW1);
+                  button_off(SW5);
+                  a0value= analogRead(A0);
+                  EEPROM.put(address_startramp, startramp);
+                  menuupdate=1;
+                  submenuon=0;
+                 
+                }
+                if(a0value >= SW2-swtolerance && a0value <= SW2+swtolerance)
+                {
+                  startramp =  weight_change_acc(SW2,startramp, 0.001,0.01, 3, 1);
+                  button_off(SW2);
+
+                  }
+                  
+          
+                
+                }
+                if(a0value >= SW3-swtolerance && a0value <= SW3+swtolerance)
+                {
+                  startramp = weight_change_acc(SW3,startramp,-0.001,-0.01, 3, 1);
+                  button_off(SW3);
+                  }
+                  
+                }
+              }
+
+
+
+void submenu_rampend()
+{
+  lcd_print_weight(endramp,3, 1);
+  submenuon=1;
+  while(submenuon)
+            {
+            
+              if(analogRead(A0) < noSWpressed)
+                {
+               delay(10);
+               a0value= analogRead(A0);
+                if((a0value >= SW1-swtolerance && a0value <= SW1+swtolerance)||(a0value >= SW5-swtolerance && a0value <= SW5+swtolerance))
+                {
+                  button_off(SW1);
+                  button_off(SW5);
+                  a0value= analogRead(A0);
+                  EEPROM.put(address_endramp, endramp);
+                  menuupdate=1;
+                  submenuon=0;
+                 
+                }
+                if(a0value >= SW2-swtolerance && a0value <= SW2+swtolerance)
+                {
+                  endramp =  weight_change_acc(SW2,endramp, 0.001,0.01, 3, 1);
+                  button_off(SW2);
+
+                  }
+                  
+          
+                
+                }
+                if(a0value >= SW3-swtolerance && a0value <= SW3+swtolerance)
+                {
+                  endramp = weight_change_acc(SW3,endramp,-0.001,-0.01, 3, 1);
+                  button_off(SW3);
+                  }
+                  
+                }
+              }
+
+void submenu_tolerance()
+{
+  lcd_print_weight(tolerance,3, 1);
+  submenuon=1;
+  while(submenuon)
+            {
+            
+              if(analogRead(A0) < noSWpressed)
+                {
+               delay(10);
+               a0value= analogRead(A0);
+                if((a0value >= SW1-swtolerance && a0value <= SW1+swtolerance)||(a0value >= SW5-swtolerance && a0value <= SW5+swtolerance))
+                {
+                  button_off(SW1);
+                  button_off(SW5);
+                  a0value= analogRead(A0);
+                  EEPROM.put(address_tolerance, tolerance);
+                  menuupdate=1;
+                  submenuon=0;
+                 
+                }
+                if(a0value >= SW2-swtolerance && a0value <= SW2+swtolerance)
+                {
+                  tolerance =  weight_change_acc(SW2,tolerance, 0.001,0.01, 3, 1);
+                  button_off(SW2);
+
+                  }
+                  
+          
+                
+                }
+                if(a0value >= SW3-swtolerance && a0value <= SW3+swtolerance)
+                {
+                  tolerance = weight_change_acc(SW3,tolerance,-0.001,-0.01, 3, 1);
+                  button_off(SW3);
+                  }
+                  
+                }
+              }
+
+void submenu_reset()
+{
+          strcpy_P(PufferChar, (char *)pgm_read_word(&(str_ask[Language]))); 
+          lcd.print(PufferChar);
+          submenuon=1;
+          while(submenuon)
+          {
+            if(analogRead(A0) < noSWpressed)
+              {
+              delay(10);
+              a0value= analogRead(A0);
+              if(a0value >= SW1-swtolerance && a0value <= SW1+swtolerance)
+              {
+                button_off(SW1);
+                a0value= analogRead(A0);
+                menuupdate=1;
+                submenuon=0;
+                
+              }
+              if(a0value >= SW5-swtolerance && a0value <= SW5+swtolerance)
+              {
+                button_off(SW5);
+                lcd.clear();
+                for(int c=0; c<=255; c++)
+                {
+                EEPROM.put(c, 0);
+                }//end of for
+                lcd.setCursor(0,0);
+                lcd.print(F("reset finished"));
+                lcd.setCursor(0,1);
+                lcd.print(F("unplug loader"));
+                while(1)
+                {
+                 }
+              }
+              }
+          } 
+}
+
+
+void submenu_language()
+{ 
+            submenuon=1;
+            new_Language=Language;
+            while(submenuon)
+            {
+                          lcd.clear();
+                          lcd.setCursor(1,0);
+                          lcd.print(menu[menuentry]);
+                          lcd.setCursor(0,1);
+                          lcd.print(F(">"));
+                          submenuupdate=0;
+                          if(new_Language<0){new_Language=number_languages-1;}
+                          if(new_Language>(number_languages-1)){new_Language=0;}
+                          if(new_Language==0)
+                          {
+                          strcpy_P(PufferChar, (char *)pgm_read_word(&(str_english[Language]))); 
+                          }
+                          else if (new_Language==1)
+                          {
+                          strcpy_P(PufferChar, (char *)pgm_read_word(&(str_2ndlanguage[Language]))); 
+                          }
+                          else 
+                          {
+                          strcpy_P(PufferChar, (char *)pgm_read_word(&(str_3ndlanguage[Language]))); 
+                          }
+                          lcd.print(PufferChar);
+                          
+              while(submenuon && !submenuupdate)   
+              {       
+              if(analogRead(A0) < noSWpressed)
+                {
+               delay(10);
+               a0value= analogRead(A0);
+                if((a0value >= SW1-swtolerance && a0value <= SW1+swtolerance)||(a0value >= SW5-swtolerance && a0value <= SW5+swtolerance))
+                {
+                  if (Language!=new_Language)
+                  {
+                  Language=new_Language;
+                  EEPROM.put(address_Language, Language);
+                  language();
+                  }
+                  button_off(SW1);
+                  button_off(SW5);
+                  a0value= analogRead(A0);
+                  
+                  menuupdate=1;
+                  submenuon=0;
+                }
+                if(a0value >= SW2-swtolerance && a0value <= SW2+swtolerance)
+                {
+                  button_off(SW2);
+                  new_Language++; 
+                  submenuupdate=1;
+                 
+                  }
+
+                if(a0value >= SW3-swtolerance && a0value <= SW3+swtolerance)
+                {
+                  button_off(SW3);
+                  new_Language--;
+                  submenuupdate=1;
+                  
+                  }
+                  
+                }
+              }
+              }
+
+
+  
+}
+
+
+
+
+
+void lcd_print_weight(float weight,byte lcd_cursor, byte lcd_line) //prints a weight with unit, limits it , 8 spaces needed
+{
+if(scaleunit==0||scalecalib>0)
+  {
+  if(weight>99.999){weight = 99.999;}
+  if(weight<-9.999){weight = -9.999;}
+  show_dec=3;
+  lcd.setCursor(lcd_cursor+6,lcd_line);
+  lcd.print(F(" g"));
+ 
+}
+else
+{
+  if(weight>999.99){weight = 999.99;}
+  if(weight<-99.99){weight = -99.99;}
+  show_dec=2;
+  lcd.setCursor(lcd_cursor+6,lcd_line);
+  lcd.print(F("gn"));
+}
+dtostrf(weight, 6, show_dec,PufferChar); 
+lcd.setCursor(lcd_cursor,lcd_line);
+lcd.print(PufferChar);
+}
+
+void button_off(int sw) // waits until the button is released
+{
+ while(!((a0value > sw+swtolerance) || (a0value < sw-swtolerance)))
+ {a0value= analogRead(A0);}
+ //delay(10);
+ //a0value= analogRead(A0);
+ }
